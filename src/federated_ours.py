@@ -132,7 +132,7 @@ if __name__ == '__main__':
         used_energy = np.maximum(0, used_energy)
 
         # update global weights
-        global_weights = average_weights(local_weights)
+        global_weights = average_weights(cluster_weights)
 
         # update global weights
         global_model.load_state_dict(global_weights)

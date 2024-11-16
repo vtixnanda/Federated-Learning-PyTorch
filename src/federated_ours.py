@@ -9,6 +9,8 @@ import time
 import pickle
 import numpy as np
 import scipy.io as sio
+import networkx as nx
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 import torch
@@ -18,6 +20,7 @@ from options import args_parser
 from update import LocalUpdate, test_inference
 from models import MLP, CNNMnist, CNNFashion_Mnist, CNNCifar
 from utils import get_dataset, average_weights, exp_details
+from networkx.algorithms import community
 
 
 if __name__ == '__main__':
@@ -34,8 +37,7 @@ if __name__ == '__main__':
 
     # if args.gpu_id:
     #     torch.cuda.set_device(args.gpu_id)
-    # device = 'cuda' if args.gpu else 'cpu'
-    device = 'cpu'
+    device = 'cuda' if args.gpu else 'cpu'
 
     # load dataset and user groups
     train_dataset, test_dataset, user_groups = get_dataset(args)
@@ -76,86 +78,116 @@ if __name__ == '__main__':
     print_every = 2
     val_loss_pre, counter = 0, 0
     
-    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 2, 6, 10, 1, 10
+    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 1, 3, 10, 1, 10
     used_energy = np.zeros(args.num_users)
     adj_matrix = sio.loadmat('../data/Adjacency.mat')
     adj_matrix = adj_matrix['A']
+    G = nx.from_numpy_array(adj_matrix)
+
+    clusters = []
+    avg_battery_round = []
+
+    if args.modularity:
+        clusters = community.greedy_modularity_communities(G)
+        clusters = [list(x) for x in clusters]
 
     for epoch in tqdm(range(args.epochs)):
         cluster_weights, cluster_losses = [], []
+        chosen_nodes = np.array([])
         all_non_chosen_nodes = []
         # print(f'\n | Global Training Round : {epoch+1} |\n')
 
         global_model.train()
         eligible_nodes = np.where(used_energy <= energy_tot - energy_cloud)[0]
-        chosen_nodes = np.random.choice(eligible_nodes, num_sel_users, replace=False)
 
+        if args.modularity:
+            # Step 1: For each cluster, choose the highest degree node with cnt <= M - n
+            for cluster in clusters:
+                # Sort cluster nodes by degree in descending order
+                sorted_nodes = sorted(cluster, key=lambda node: G.degree[node], reverse=True)
+                
+                # Find the first node which satisfies energy constraints
+                chosen_node = next((node for node in sorted_nodes if used_energy[node] <= energy_tot - energy_node), None)
+                if chosen_node:
+                    chosen_nodes = np.append(chosen_nodes, int(chosen_node))
+        else:
+            chosen_nodes = np.random.choice(eligible_nodes, num_sel_users)#, replace=False)
+
+        chosen_nodes = chosen_nodes.astype(int)
         # Step 2: Update used_energy for chosen nodes
-        used_energy[chosen_nodes] += energy_cloud
+        if chosen_nodes.size == 0:
+            used_energy = np.maximum(used_energy - energy_rec, 0)
+            avg_battery_round.append(0)
+            
+        else:
+            used_energy[chosen_nodes] += energy_cloud
+            round_energy = np.array([])
+            round_energy = np.append(round_energy, np.ones(energy_cloud)*len(chosen_nodes))
+            for idx in chosen_nodes:
+                neighbors = np.where(adj_matrix[idx] > 0)[0]
+                eligible_neighbors = [neigh for neigh in neighbors if used_energy[neigh] <= energy_tot - energy_node]
+                used_energy[eligible_neighbors] += energy_node
+                round_energy = np.append(round_energy, np.ones(energy_node)*len(eligible_neighbors))
 
-        for idx in chosen_nodes:
-            neighbors = np.where(adj_matrix[idx] > 0)[0]
-            eligible_neighbors = [neigh for neigh in neighbors if used_energy[neigh] <= energy_tot - energy_node]
-            used_energy[eligible_neighbors] += energy_node
+                non_chosen_non_neighbor_nodes = [j for j in range(args.num_users) 
+                    if j not in chosen_nodes and j not in neighbors]
+                all_non_chosen_nodes.extend(non_chosen_non_neighbor_nodes)
 
-            non_chosen_non_neighbor_nodes = [
-            j for j in range(args.num_users) if j not in chosen_nodes and j not in neighbors
-            ]
-            all_non_chosen_nodes.extend(non_chosen_non_neighbor_nodes)
+                local_weights, local_losses = [], []
 
-            local_weights, local_losses = [], []
-
-            # include chosen node as part of aggregation
-            local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                        idxs=user_groups[idx], logger=logger)
-            w, loss = local_model.update_weights(
-                model=copy.deepcopy(global_model), global_round=epoch)
-            local_weights.append(copy.deepcopy(w))
-            local_losses.append(copy.deepcopy(loss))
-
-            for neigh in eligible_neighbors:
+                # include chosen node as part of aggregation
                 local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                        idxs=user_groups[neigh], logger=logger)
+                                            idxs=user_groups[idx], logger=logger)
                 w, loss = local_model.update_weights(
                     model=copy.deepcopy(global_model), global_round=epoch)
                 local_weights.append(copy.deepcopy(w))
                 local_losses.append(copy.deepcopy(loss))
 
-            cluster_weights.append(average_weights(local_weights))
-            cluster_losses.append(sum(local_losses)/len(local_losses))
+                for neigh in eligible_neighbors:
+                    local_model = LocalUpdate(args=args, dataset=train_dataset,
+                                            idxs=user_groups[neigh], logger=logger)
+                    w, loss = local_model.update_weights(
+                        model=copy.deepcopy(global_model), global_round=epoch)
+                    local_weights.append(copy.deepcopy(w))
+                    local_losses.append(copy.deepcopy(loss))
 
-        # Update used_energy for nodes that are neither chosen nor neighbors of chosen nodes
-        all_non_chosen_nodes = np.unique(all_non_chosen_nodes)  # Remove duplicates
-        used_energy[all_non_chosen_nodes] -= energy_rec
+                cluster_weights.append(average_weights(local_weights))
+                cluster_losses.append(sum(local_losses)/len(local_losses))
 
-        # Step 5: Ensure used_energy values are non-negative
-        used_energy = np.maximum(0, used_energy)
+            # Update used_energy for nodes that are neither chosen nor neighbors of chosen nodes
+            all_non_chosen_nodes = np.unique(all_non_chosen_nodes)  # Remove duplicates
+            used_energy[all_non_chosen_nodes] -= energy_rec
 
-        # update global weights
-        global_weights = average_weights(cluster_weights)
+            # Step 5: Ensure used_energy values are non-negative
+            used_energy = np.maximum(0, used_energy)
 
-        # update global weights
-        global_model.load_state_dict(global_weights)
+            # update global weights
+            global_weights = average_weights(cluster_weights)
 
-        loss_avg = sum(cluster_losses) / len(cluster_losses)
-        train_loss.append(loss_avg)
+            # update global weights
+            global_model.load_state_dict(global_weights)
 
-        # Calculate avg training accuracy over all users at every epoch
-        list_acc, list_loss = [], []
-        global_model.eval()
-        for c in range(args.num_users):
-            local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                      idxs=user_groups[idx], logger=logger)
-            acc, loss = local_model.inference(model=global_model)
-            list_acc.append(acc)
-            list_loss.append(loss)
-        train_accuracy.append(sum(list_acc)/len(list_acc))
+            loss_avg = sum(cluster_losses) / len(cluster_losses)
+            train_loss.append(loss_avg)
 
-        # print global training loss after every 'i' rounds
-        # if (epoch+1) % print_every == 0:
-        #     print(f' \nAvg Training Stats after {epoch+1} global rounds:')
-        #     print(f'Training Loss : {np.mean(np.array(train_loss))}')
-        #     print('Train Accuracy: {:.2f}% \n'.format(100*train_accuracy[-1]))
+            # Calculate avg training accuracy over all users at every epoch
+            list_acc, list_loss = [], []
+            global_model.eval()
+            for c in range(args.num_users):
+                local_model = LocalUpdate(args=args, dataset=train_dataset,
+                                        idxs=user_groups[idx], logger=logger)
+                acc, loss = local_model.inference(model=global_model)
+                list_acc.append(acc)
+                list_loss.append(loss)
+            train_accuracy.append(sum(list_acc)/len(list_acc))
+            avg_battery_round.append(np.mean(round_energy))
+
+
+            #print global training loss after every 'i' rounds
+            if (epoch+1) % print_every == 0:
+                print(f' \nAvg Training Stats after {epoch+1} global rounds:')
+                print(f'Training Loss : {np.mean(np.array(train_loss))}')
+                print('Train Accuracy: {:.2f}% \n'.format(100*train_accuracy[-1]))
 
     # Test inference after completion of training
     test_acc, test_loss = test_inference(args, global_model, test_dataset)
@@ -179,22 +211,22 @@ if __name__ == '__main__':
     # import matplotlib.pyplot as plt
     # matplotlib.use('Agg')
 
-    # Plot Loss curve
-    # plt.figure()
-    # plt.title('Training Loss vs Communication Rounds - IID')
-    # plt.plot(range(len(train_loss)), train_loss, color='r')
-    # plt.ylabel('Training loss')
-    # plt.xlabel('Communication Rounds')
-    # plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_loss.png'.
-                # format(args.dataset, args.model, args.epochs, args.frac,
-                #        args.iid, args.local_ep, args.local_bs))
-    #
-    # # Plot Average Accuracy vs Communication rounds
-    # plt.figure()
-    # plt.title('Average Accuracy vs Communication Rounds - IID')
-    # plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
-    # plt.ylabel('Average Accuracy')
-    # plt.xlabel('Communication Rounds')
-    # plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_acc.png'.
-    #             format(args.dataset, args.model, args.epochs, args.frac,
-    #                    args.iid, args.local_ep, args.local_bs))
+    #Plot Loss curve
+    plt.figure()
+    plt.title('Training Loss vs Communication Rounds - Non-IID')
+    plt.plot(range(len(train_loss)), avg_battery_round, color='r')
+    plt.ylabel('Battery Used')
+    plt.xlabel('Communication Rounds')
+    plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_M[{}]_battery.png'.
+                format(args.dataset, args.model, args.epochs, args.frac,
+                       args.iid, args.local_ep, args.local_bs, args.modularity))
+    
+    # Plot Average Accuracy vs Communication rounds
+    plt.figure()
+    plt.title('Average Accuracy vs Communication Rounds - Non-IID')
+    plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
+    plt.ylabel('Average Accuracy')
+    plt.xlabel('Communication Rounds')
+    plt.savefig('../save/fed_{}_{}_{}_C[{}]_iid[{}]_E[{}]_B[{}]_M[{}]_acc.png'.
+                format(args.dataset, args.model, args.epochs, args.frac,
+                       args.iid, args.local_ep, args.local_bs, args.modularity))

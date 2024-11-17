@@ -83,7 +83,7 @@ if __name__ == '__main__':
     # initializing energy usage and cluster lists for graphs
     clusters = []
     avg_battery_round = []
-    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 1, 3, 10, 0, 3
+    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 1, 3, 25, 0, 3
     used_energy = np.zeros(args.num_users)
 
     # data and how to iterate through data
@@ -255,9 +255,9 @@ if __name__ == '__main__':
 
     #Plot Loss curve
     plt.figure()
-    plt.title('Battery Use vs Communication Round - Modularity Cluster Init')
-    plt.plot(range(len(avg_battery_round)), avg_battery_round, color='r')
-    plt.ylabel('Battery Used')
+    plt.title('Battery Use vs Communication Round - Centralized')
+    plt.plot(range(len(avg_battery_round)), (avg_battery_round/energy_tot) * 100, color='r')
+    plt.ylabel('Battery Percentage Used')
     plt.xlabel('Communication Rounds')
     plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_battery.png'.
                 format(args.dataset, args.model, args.epochs,
@@ -265,7 +265,7 @@ if __name__ == '__main__':
     
     # Plot Average Accuracy vs Communication rounds
     plt.figure()
-    plt.title('Average Accuracy vs Communication Rounds - Modularity Cluster Init')
+    plt.title('Average Accuracy vs Communication Rounds - Centralized')
     plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
     plt.ylabel('Average Accuracy')
     plt.xlabel('Communication Rounds')

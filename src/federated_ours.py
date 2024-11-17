@@ -34,7 +34,7 @@ if __name__ == '__main__':
     exp_details(args)
     print(args)
     mod = args.modularity
-    centralized = 0
+    centralized = 1
     # sys.exit()
 
     # if args.gpu_id:
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     # initializing energy usage and cluster lists for graphs
     clusters = []
     avg_battery_round = []
-    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 1, 3, 10, 0, 10
+    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 1, 3, 10, 0, 3
     used_energy = np.zeros(args.num_users)
 
     # data and how to iterate through data
@@ -117,13 +117,13 @@ if __name__ == '__main__':
             used_energy = np.maximum(used_energy - energy_rec, 0)
             train_accuracy.append(train_accuracy[-1])
             train_loss.append(train_loss[-1])
-            avg_battery_round.append(0)
+            avg_battery_round.append(avg_battery_round[-1])
             continue
 
         idx_nodes = np.where(used_energy[current_nodes] <= energy_tot - energy_cloud)[0]
         eligible_nodes = current_nodes[idx_nodes]
 
-        if args.modularity:
+        if args.modularity and G.edges:
             clusters = community.greedy_modularity_communities(G)
             clusters = [list(x) for x in clusters]
 
@@ -138,7 +138,7 @@ if __name__ == '__main__':
                     chosen_nodes = np.append(chosen_nodes, int(chosen_node))
         else:
             if centralized:
-                chosen_nodes = np.array(G.nodes)
+                chosen_nodes = eligible_nodes
             else:
                 chosen_nodes = np.random.choice(eligible_nodes, min(num_sel_users, len(eligible_nodes)))#, replace=False)
 
@@ -149,7 +149,7 @@ if __name__ == '__main__':
             used_energy = np.maximum(used_energy - energy_rec, 0)
             train_accuracy.append(train_accuracy[-1])
             train_loss.append(train_loss[-1])
-            avg_battery_round.append(0)
+            avg_battery_round.append(np.mean(used_energy))
             
         else:
             used_energy[chosen_nodes] += energy_cloud
@@ -215,7 +215,7 @@ if __name__ == '__main__':
                 list_acc.append(acc)
                 list_loss.append(loss)
             train_accuracy.append(sum(list_acc)/len(list_acc))
-            avg_battery_round.append(np.mean(round_energy))
+            avg_battery_round.append(np.mean(used_energy))
 
 
             #print global training loss after every 'i' rounds
@@ -255,8 +255,8 @@ if __name__ == '__main__':
 
     #Plot Loss curve
     plt.figure()
-    plt.title('Battery Use vs Communication Round - Random')
-    plt.plot(range(len(train_loss)), avg_battery_round, color='r')
+    plt.title('Battery Use vs Communication Round - Modularity Cluster Init')
+    plt.plot(range(len(avg_battery_round)), avg_battery_round, color='r')
     plt.ylabel('Battery Used')
     plt.xlabel('Communication Rounds')
     plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_battery.png'.
@@ -265,7 +265,7 @@ if __name__ == '__main__':
     
     # Plot Average Accuracy vs Communication rounds
     plt.figure()
-    plt.title('Average Accuracy vs Communication Rounds - Random')
+    plt.title('Average Accuracy vs Communication Rounds - Modularity Cluster Init')
     plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
     plt.ylabel('Average Accuracy')
     plt.xlabel('Communication Rounds')

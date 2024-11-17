@@ -4,6 +4,8 @@
 
 import copy
 import torch
+import numpy as np
+import networkx as nx
 from torchvision import datasets, transforms
 from sampling import mnist_iid, mnist_noniid, mnist_noniid_unequal
 from sampling import cifar_iid, cifar_noniid
@@ -71,6 +73,37 @@ def get_dataset(args):
 
     return train_dataset, test_dataset, user_groups
 
+def hourly_data(df_commround):
+    """Returns a graph of all nodes that are active for a communication round"""
+    threshold = 0.00089977 #Threshold from MOHAWK
+    result = {}
+    adj_list = []
+
+    for i in range(len(df_commround)):
+        for j in range(i + 1, len(df_commround)):
+            x1, y1 = df_commround.iloc[i]['geolat'], df_commround.iloc[i]['geolong']
+            x2, y2 = df_commround.iloc[j]['geolat'], df_commround.iloc[j]['geolong']
+
+            # Calculate the Euclidean distance
+            distance = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+            # Compare the distance with the threshold
+            if distance < threshold:
+                m, n = df_commround.iloc[i]['persistentid'], df_commround.iloc[j]['persistentid']
+                # Add to the result dictionary
+                if m not in result:
+                    result[m] = []
+                if m!= n:
+                    result[m].append(n)
+                adj_list = {k: np.unique(v) for k, v in result.items() if v}
+
+    if not adj_list:
+        G = nx.Graph()
+        G.add_nodes_from(df_commround.iloc[:]['persistentid'])
+    else:
+        G = nx.from_dict_of_lists(adj_list)
+        
+    return G
 
 def average_weights(w):
     """

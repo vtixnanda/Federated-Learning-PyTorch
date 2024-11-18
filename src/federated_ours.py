@@ -83,7 +83,9 @@ if __name__ == '__main__':
     # initializing energy usage and cluster lists for graphs
     clusters = []
     avg_battery_round = []
-    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 1, 3, 25, 0, 3
+    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 0.02, 0.27, 10, 0, 3
+    if centralized:
+        energy_cloud = 0.21
     used_energy = np.zeros(args.num_users)
 
     # data and how to iterate through data

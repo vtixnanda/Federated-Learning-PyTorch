@@ -87,7 +87,7 @@ if __name__ == '__main__':
     used_energy = np.zeros(args.num_users)
 
     # data and how to iterate through data
-    data = pd.read_csv('../data/Top_100_Clients_9_to_5.csv')
+    data = pd.read_csv('../data/Top_250_Clients_9_to_5.csv')
     today = date(2020, 5, 1)
     deltadate = timedelta(days=1)
     hour = 9
@@ -252,29 +252,35 @@ if __name__ == '__main__':
     # import matplotlib
     # import matplotlib.pyplot as plt
     # matplotlib.use('Agg')
+    np.savez('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]'.
+                format(args.dataset, args.model, args.epochs,
+                       args.iid, args.modularity, centralized), 
+                       battery = (np.array(avg_battery_round)/energy_tot) * 100, 
+                       train_accuracy = train_accuracy,
+                       test_acc = test_acc)
 
     #Plot Loss curve
-    title = "Random Cluster Init"
-    if args.modularity:
-        title = "Modularity Cluster Init"
-    elif centralized:
-        title = "Centralized"
+    # title = "Random Cluster Init"
+    # if args.modularity:
+    #     title = "Modularity Cluster Init"
+    # elif centralized:
+    #     title = "Centralized"
 
-    plt.figure()
-    plt.title('Battery Use vs Communication Round - ' + title)
-    plt.plot(range(len(avg_battery_round)), (np.array(avg_battery_round)/energy_tot) * 100, color='r')
-    plt.ylabel('Battery Percentage Used')
-    plt.xlabel('Communication Rounds')
-    plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_battery.png'.
-                format(args.dataset, args.model, args.epochs,
-                       args.iid, args.modularity, centralized))
+    # plt.figure()
+    # plt.title('Battery Use vs Communication Round - ' + title)
+    # plt.plot(range(len(avg_battery_round)), (np.array(avg_battery_round)/energy_tot) * 100, color='r')
+    # plt.ylabel('Battery Percentage Used')
+    # plt.xlabel('Communication Rounds')
+    # plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_battery.png'.
+    #             format(args.dataset, args.model, args.epochs,
+    #                    args.iid, args.modularity, centralized))
     
-    # Plot Average Accuracy vs Communication rounds
-    plt.figure()
-    plt.title('Average Accuracy vs Communication Rounds - ' + title)
-    plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
-    plt.ylabel('Average Accuracy')
-    plt.xlabel('Communication Rounds')
-    plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_acc.png'.
-                format(args.dataset, args.model, args.epochs,
-                       args.iid, args.modularity, centralized))
+    # # Plot Average Accuracy vs Communication rounds
+    # plt.figure()
+    # plt.title('Average Accuracy vs Communication Rounds - ' + title)
+    # plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
+    # plt.ylabel('Average Accuracy')
+    # plt.xlabel('Communication Rounds')
+    # plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_acc.png'.
+                # format(args.dataset, args.model, args.epochs,
+                #        args.iid, args.modularity, centralized))

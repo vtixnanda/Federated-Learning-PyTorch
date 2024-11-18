@@ -31,7 +31,7 @@ def mnist_noniid(dataset, num_users):
     :return:
     """
     # 60,000 training imgs -->  200 imgs/shard X 300 shards
-    num_shards, num_imgs = 200, 300
+    num_shards, num_imgs = int(num_users*2), int(30000/num_users)
     idx_shard = [i for i in range(num_shards)]
     dict_users = {i: np.array([]) for i in range(num_users)}
     idxs = np.arange(num_shards*num_imgs)
@@ -165,7 +165,7 @@ def cifar_noniid(dataset, num_users):
     :param num_users:
     :return:
     """
-    num_shards, num_imgs = 200, 250
+    num_shards, num_imgs = int(num_users*2), int(30000/num_users)
     idx_shard = [i for i in range(num_shards)]
     dict_users = {i: np.array([]) for i in range(num_users)}
     idxs = np.arange(num_shards*num_imgs)

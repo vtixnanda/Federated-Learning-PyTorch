@@ -34,7 +34,7 @@ if __name__ == '__main__':
     exp_details(args)
     print(args)
     mod = args.modularity
-    centralized = 1
+    centralized = args.central
     # sys.exit()
 
     # if args.gpu_id:
@@ -254,9 +254,15 @@ if __name__ == '__main__':
     # matplotlib.use('Agg')
 
     #Plot Loss curve
+    title = "Random Cluster Init"
+    if args.modularity:
+        title = "Modularity Cluster Init"
+    elif centralized:
+        title = "Centralized"
+
     plt.figure()
-    plt.title('Battery Use vs Communication Round - Centralized')
-    plt.plot(range(len(avg_battery_round)), (avg_battery_round/energy_tot) * 100, color='r')
+    plt.title('Battery Use vs Communication Round - ' + title)
+    plt.plot(range(len(avg_battery_round)), (np.array(avg_battery_round)/energy_tot) * 100, color='r')
     plt.ylabel('Battery Percentage Used')
     plt.xlabel('Communication Rounds')
     plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_battery.png'.
@@ -265,7 +271,7 @@ if __name__ == '__main__':
     
     # Plot Average Accuracy vs Communication rounds
     plt.figure()
-    plt.title('Average Accuracy vs Communication Rounds - Centralized')
+    plt.title('Average Accuracy vs Communication Rounds - ' + title)
     plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
     plt.ylabel('Average Accuracy')
     plt.xlabel('Communication Rounds')

@@ -61,5 +61,6 @@ def args_parser():
     parser.add_argument('--verbose', type=int, default=1, help='verbose')
     parser.add_argument('--seed', type=int, default=1, help='random seed')
     parser.add_argument('--modularity', type=int, default=0, help='community selection from modularity')
+    parser.add_argument('--central', type=int, default=0, help='centralized approach')
     args = parser.parse_args()
     return args

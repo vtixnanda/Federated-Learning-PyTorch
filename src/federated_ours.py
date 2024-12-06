@@ -83,9 +83,9 @@ if __name__ == '__main__':
     # initializing energy usage and cluster lists for graphs
     clusters = []
     avg_battery_round = []
-    energy_node, energy_cloud, energy_tot, energy_rec, num_sel_users = 0.02, 0.27, 10, 0, 3
-    if centralized:
-        energy_cloud = 0.21
+    energy_node, energy_cloud, energy_tot, num_sel_users = 0.065, 0.117, 10, 3
+    # if centralized:
+    #     energy_cloud = 0.09
     used_energy = np.zeros(args.num_users)
 
     # data and how to iterate through data
@@ -116,14 +116,11 @@ if __name__ == '__main__':
             if (epoch + 1) % 9 == 0:
                 today = today + deltadate
             
-            used_energy = np.maximum(used_energy - energy_rec, 0)
+            used_energy = np.maximum(used_energy, 0)
             train_accuracy.append(train_accuracy[-1])
             train_loss.append(train_loss[-1])
             avg_battery_round.append(avg_battery_round[-1])
             continue
-
-        idx_nodes = np.where(used_energy[current_nodes] <= energy_tot - energy_cloud)[0]
-        eligible_nodes = current_nodes[idx_nodes]
 
         if args.modularity and G.edges:
             clusters = community.greedy_modularity_communities(G)
@@ -135,65 +132,75 @@ if __name__ == '__main__':
                 sorted_nodes = sorted(cluster, key=lambda node: G.degree[node], reverse=True)
                 
                 # Find the first node which satisfies energy constraints
-                chosen_node = next((node for node in sorted_nodes if used_energy[node] <= energy_tot - energy_node), None)
+                chosen_node = next((node for node in sorted_nodes if used_energy[node] <= energy_tot 
+                                    - energy_cloud - energy_node*G.degree[node]), None)
                 if chosen_node:
                     chosen_nodes = np.append(chosen_nodes, int(chosen_node))
         else:
+            idx_nodes = np.where(used_energy[current_nodes] <= energy_tot - energy_cloud)[0]
+            eligible_nodes = current_nodes[idx_nodes]
+
             if centralized:
                 chosen_nodes = eligible_nodes
             else:
+                eligible_nodes = [node for node in eligible_nodes if used_energy[node] <= energy_tot - 
+                                  energy_cloud - energy_node*G.degree[node]]
                 chosen_nodes = np.random.choice(eligible_nodes, min(num_sel_users, len(eligible_nodes)))#, replace=False)
 
         chosen_nodes = chosen_nodes.astype(int)
 
         # Step 2: Update used_energy for chosen nodes
         if chosen_nodes.size == 0:
-            used_energy = np.maximum(used_energy - energy_rec, 0)
+            used_energy = np.maximum(used_energy, 0)
             train_accuracy.append(train_accuracy[-1])
             train_loss.append(train_loss[-1])
             avg_battery_round.append(np.mean(used_energy))
             
         else:
-            used_energy[chosen_nodes] += energy_cloud
-            round_energy = np.array([])
-            round_energy = np.append(round_energy, np.ones(len(chosen_nodes))*energy_cloud)
-
+            for node in chosen_nodes:
+                used_energy[node] += energy_cloud 
+                if not centralized:
+                    used_energy[node] += energy_node*G.degree[node]
             local_weights, local_losses = [], []
 
             # include chosen node as part of aggregation
             for idx in chosen_nodes:
-                local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                            idxs=user_groups[idx], logger=logger)
-                w, loss = local_model.update_weights(
-                    model=copy.deepcopy(global_model), global_round=epoch)
-                local_weights.append(copy.deepcopy(w))
-                local_losses.append(copy.deepcopy(loss))
+                try:
+                    local_model = LocalUpdate(args=args, dataset=train_dataset,
+                                                idxs=user_groups[idx], logger=logger)
+                    w, loss = local_model.update_weights(
+                        model=copy.deepcopy(global_model), global_round=epoch)
+                    local_weights.append(copy.deepcopy(w))
+                    local_losses.append(copy.deepcopy(loss))
+                except:
+                    continue
 
             if not centralized:
                 for idx in chosen_nodes:
                     neighbors = G.neighbors(idx)
                     eligible_neighbors = [neigh for neigh in neighbors if used_energy[neigh] <= energy_tot - energy_node]
                     used_energy[eligible_neighbors] += energy_node
-                    round_energy = np.append(round_energy, np.ones(len(eligible_neighbors))*energy_node)
 
                     non_chosen_non_neighbor_nodes = [j for j in range(args.num_users) 
                         if j not in chosen_nodes and j not in neighbors]
                     all_non_chosen_nodes.extend(non_chosen_non_neighbor_nodes)
 
                     for neigh in eligible_neighbors:
-                        local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                                idxs=user_groups[neigh], logger=logger)
-                        w, loss = local_model.update_weights(
-                            model=copy.deepcopy(global_model), global_round=epoch)
-                        local_weights.append(copy.deepcopy(w))
-                        local_losses.append(copy.deepcopy(loss))
+                        try:   
+                            local_model = LocalUpdate(args=args, dataset=train_dataset,
+                                                    idxs=user_groups[neigh], logger=logger)
+                            w, loss = local_model.update_weights(
+                                model=copy.deepcopy(global_model), global_round=epoch)
+                            local_weights.append(copy.deepcopy(w))
+                            local_losses.append(copy.deepcopy(loss))
+                        except:
+                            continue
             else:
                 non_chosen_nodes = [j for j in range(args.num_users) if j not in chosen_nodes]
                 all_non_chosen_nodes.extend(non_chosen_nodes)
 
             # Update used_energy for nodes that are neither chosen nor neighbors of chosen nodes
             all_non_chosen_nodes = np.unique(all_non_chosen_nodes)  # Remove duplicates
-            used_energy[all_non_chosen_nodes] -= energy_rec
 
             # Step 5: Ensure used_energy values are non-negative
             used_energy = np.maximum(0, used_energy)
@@ -211,12 +218,18 @@ if __name__ == '__main__':
             list_acc, list_loss = [], []
             global_model.eval()
             for c in range(args.num_users):
-                local_model = LocalUpdate(args=args, dataset=train_dataset,
-                                        idxs=user_groups[idx], logger=logger)
-                acc, loss = local_model.inference(model=global_model)
-                list_acc.append(acc)
-                list_loss.append(loss)
-            train_accuracy.append(sum(list_acc)/len(list_acc))
+                try:
+                    local_model = LocalUpdate(args=args, dataset=train_dataset,
+                                            idxs=user_groups[idx], logger=logger)
+                    acc, loss = local_model.inference(model=global_model)
+                    list_acc.append(acc)
+                    list_loss.append(loss)
+                except:
+                    continue
+            if len(list_acc) == 0:
+                train_accuracy.append(0)
+            else:
+                train_accuracy.append(sum(list_acc)/len(list_acc))
             avg_battery_round.append(np.mean(used_energy))
 
 
@@ -254,35 +267,10 @@ if __name__ == '__main__':
     # import matplotlib
     # import matplotlib.pyplot as plt
     # matplotlib.use('Agg')
-    np.savez('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]'.
+    np.savez('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_new'.
                 format(args.dataset, args.model, args.epochs,
                        args.iid, args.modularity, centralized), 
                        battery = (np.array(avg_battery_round)/energy_tot) * 100, 
                        train_accuracy = train_accuracy,
+                       train_loss = train_loss,
                        test_acc = test_acc)
-
-    #Plot Loss curve
-    # title = "Random Cluster Init"
-    # if args.modularity:
-    #     title = "Modularity Cluster Init"
-    # elif centralized:
-    #     title = "Centralized"
-
-    # plt.figure()
-    # plt.title('Battery Use vs Communication Round - ' + title)
-    # plt.plot(range(len(avg_battery_round)), (np.array(avg_battery_round)/energy_tot) * 100, color='r')
-    # plt.ylabel('Battery Percentage Used')
-    # plt.xlabel('Communication Rounds')
-    # plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_battery.png'.
-    #             format(args.dataset, args.model, args.epochs,
-    #                    args.iid, args.modularity, centralized))
-    
-    # # Plot Average Accuracy vs Communication rounds
-    # plt.figure()
-    # plt.title('Average Accuracy vs Communication Rounds - ' + title)
-    # plt.plot(range(len(train_accuracy)), train_accuracy, color='k')
-    # plt.ylabel('Average Accuracy')
-    # plt.xlabel('Communication Rounds')
-    # plt.savefig('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_acc.png'.
-                # format(args.dataset, args.model, args.epochs,
-                #        args.iid, args.modularity, centralized))

@@ -1,11 +1,17 @@
-# Federated-Learning (PyTorch)
+# Ad-hoc Federated Learning For Edge-Devices
+Faraz Barati (faraz.barati@utexas.edu), Vignesh Nandakumar (vnandakumar@utexas.edu)
 
-Implementation of the vanilla federated learning paper : [Communication-Efficient Learning of Deep Networks from Decentralized Data](https://arxiv.org/abs/1602.05629).
+DISCLAIMER: This is a forked repository. The original repo can be found here: [Federated Learning Pytorch](https://github.com/AshwinRJ/Federated-Learning-PyTorch)
 
+This repo provides the code necessary to create simulations of mobile nodes which aggregate their neural-networks via Federated Learning (FL) to create a global model which can classify images. 
+Experiments are produced on MNIST and CIFAR10 (both IID and non-IID). In case of non-IID, the data is distributed via the Dirichlet distribution, where alpha = 0.1.
 
-Experiments are produced on MNIST, Fashion MNIST and CIFAR10 (both IID and non-IID). In case of non-IID, the data amongst the users can be split equally or unequally.
+The main file, ```federated_adhoc.py```, determines which nodes are available in a communication round and how they communicate with one another. There are three simulation methods:
+* Centralized: all nodes in a communication round are connected to the cloud.
+* Random: clusters are initialized randomly, where a selected node can communicate with the cloud and its neighbors' features are aggregated.
+* Modularity: clusters are initialized through a modularity algorithm. Then, the node with the highest degree is deemed the selected node. Feature aggregation occurs from the selected nodes' neighbors.
 
-Since the purpose of these experiments are to illustrate the effectiveness of the federated learning paradigm, only simple models such as MLP and CNN are used.
+In a communication round, connectivity issues can be included by toggling the probability of a round facing issues and the number of nodes removed. More details can be found below.
 
 ## Requirments
 Install all the packages from requirments.txt
@@ -15,31 +21,18 @@ Install all the packages from requirments.txt
 
 ## Data
 * Download train and test datasets manually or they will be automatically downloaded from torchvision datasets.
-* Experiments are run on Mnist, Fashion Mnist and Cifar.
-* To use your own dataset: Move your dataset to data directory and write a wrapper on pytorch dataset class.
+* Experiments are run on the MNIST and CIFAR10.
+* Mobility data is acquired from the [Foursquare dataset](https://drive.google.com/file/d/1sFOMHPZOCiVKCVQAVubxyEApXWu-eU81/view). Our [data](data/Top_250_Clients_9_to_5.csv) is a modified version of the original dataset, where only the top 250 nodes most occuring nodes from 9 AM - 5 PM are selected.
 
 ## Running the experiments
-The baseline experiment trains the model in the conventional way.
-
-* To run the baseline experiment with MNIST on MLP using CPU:
+In the root directory, run the following commands:
 ```
-python src/baseline_main.py --model=mlp --dataset=mnist --epochs=10
+cd src
+python federated_adhoc.py --model=mlp --dataset=mnist --epochs=10
 ```
 * Or to run it on GPU (eg: if gpu:0 is available):
 ```
-python src/baseline_main.py --model=mlp --dataset=mnist --gpu=0 --epochs=10
-```
------
-
-Federated experiment involves training a global model using many local models.
-
-* To run the federated experiment with CIFAR on CNN (IID):
-```
-python src/federated_main.py --model=cnn --dataset=cifar --gpu=0 --iid=1 --epochs=10
-```
-* To run the same experiment under non-IID condition:
-```
-python src/federated_main.py --model=cnn --dataset=cifar --gpu=0 --iid=0 --epochs=10
+python federated_adhoc.py --model=mlp --dataset=mnist --gpu=1 --epochs=10
 ```
 
 You can change the default values of other parameters to simulate different conditions. Refer to the options section.
@@ -57,55 +50,21 @@ The default values for various paramters parsed to the experiment are given in `
 
 #### Federated Parameters
 * ```--iid:```      Distribution of data amongst users. Default set to IID. Set to 0 for non-IID.
-* ```--num_users:```Number of users. Default is 100.
-* ```--frac:```     Fraction of users to be used for federated updates. Default is 0.1.
+* ```--num_users:```Number of users. Default is 250.
 * ```--local_ep:``` Number of local training epochs in each user. Default is 10.
 * ```--local_bs:``` Batch size of local updates in each user. Default is 10.
-* ```--unequal:```  Used in non-iid setting. Option to split the data amongst users equally or unequally. Default set to 0 for equal splits. Set to 1 for unequal splits.
+* ```--central:```  Running experiments where every node is accounted for (STAR Topology). Either 0 or 1.
+* ```--modularity:```  Running experiments where modularity algorithm clusters nodes. Either 0 or 1.
+* ```--p_round_fail:``` Sets the probability of a round facing connectivity issues. Range is [0,1].
+* ```--num_nodes_rem:``` Number of nodes removed in a communication round. Default is 0. Range is [0,1].
 
-## Results on MNIST
-#### Baseline Experiment:
-The experiment involves training a single model in the conventional way.
+## Plotting
+If ```src/experiments.sh``` was ran, then running ```python plot_experiments.py``` in the ```src``` directory will generate bar graphs for the simulations in the bash script. An example can be found [here](save/prl_sweep.png).
 
-Parameters: <br />
-* ```Optimizer:```    : SGD 
-* ```Learning Rate:``` 0.01
-
-```Table 1:``` Test accuracy after training for 10 epochs:
-
-| Model | Test Acc |
-| ----- | -----    |
-|  MLP  |  92.71%  |
-|  CNN  |  98.42%  |
-
-----
-
-#### Federated Experiment:
-The experiment involves training a global model in the federated setting.
-
-Federated parameters (default values):
-* ```Fraction of users (C)```: 0.1 
-* ```Local Batch size  (B)```: 10 
-* ```Local Epochs      (E)```: 10 
-* ```Optimizer            ```: SGD 
-* ```Learning Rate        ```: 0.01 <br />
-
-```Table 2:``` Test accuracy after training for 10 global epochs with:
-
-| Model |    IID   | Non-IID (equal)|
-| ----- | -----    |----            |
-|  MLP  |  88.38%  |     73.49%     |
-|  CNN  |  97.28%  |     75.94%     |
-
-
-## Further Readings
-### Papers:
-* [Federated Learning: Challenges, Methods, and Future Directions](https://arxiv.org/abs/1908.07873)
-* [Communication-Efficient Learning of Deep Networks from Decentralized Data](https://arxiv.org/abs/1602.05629)
-* [Deep Learning with Differential Privacy](https://arxiv.org/abs/1607.00133)
-
-### Blog Posts:
-* [CMU MLD Blog Post: Federated Learning: Challenges, Methods, and Future Directions](https://blog.ml.cmu.edu/2019/11/12/federated-learning-challenges-methods-and-future-directions/)
-* [Leaf: A Benchmark for Federated Settings (CMU)](https://leaf.cmu.edu/)
-* [TensorFlow Federated](https://www.tensorflow.org/federated)
-* [Google AI Blog Post](https://ai.googleblog.com/2017/04/federated-learning-collaborative.html)
+Otherwise, ```src/plot.py``` is fit if the following commands were ran.
+```
+python federated_adhoc.py --model=cnn --dataset=mnist --epochs=250 --modularity=0 --central=0 --verbose=0 --iid=0
+python federated_adhoc.py --model=cnn --dataset=mnist --epochs=250 --modularity=0 --central=1 --verbose=0 --iid=0
+python federated_adhoc.py --model=cnn --dataset=mnist --epochs=250 --modularity=1 --central=0 --verbose=0 --iid=0
+```
+In this scenario, running ```plot.py``` in the ```src``` directory will generate plots for communication time per commmunication round, average cumulative battery used, and training loss across three methods. If other simulations were ran, please modify ```plot.py``` to update your parameters.

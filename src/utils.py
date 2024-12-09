@@ -6,6 +6,8 @@ import copy
 import torch
 import numpy as np
 import networkx as nx
+import sys
+from collections import OrderedDict
 from torchvision import datasets, transforms
 from sampling import mnist_iid, mnist_noniid, mnist_noniid_unequal
 from sampling import cifar_iid, cifar_noniid
@@ -75,7 +77,7 @@ def get_dataset(args):
 
 def hourly_data(df_commround):
     """Returns a graph of all nodes that are active for a communication round"""
-    threshold = 0.00089977 #Threshold from MOHAWK
+    threshold = 0.00089977 # distance threshold from MOHAWK
     result = {}
     adj_list = []
 
@@ -109,11 +111,20 @@ def average_weights(w):
     """
     Returns the average of the weights.
     """
-    w_avg = copy.deepcopy(w[0])
+    if len(w) > 1:
+        w_avg = copy.deepcopy(w[0])
+
+    else:
+        w_avg = copy.deepcopy(w)
+        while not isinstance(w_avg, OrderedDict):
+            w_avg = w_avg[0]
+
+    # average the weights across each layer
     for key in w_avg.keys():
         for i in range(1, len(w)):
             w_avg[key] += w[i][key]
         w_avg[key] = torch.div(w_avg[key], len(w))
+
     return w_avg
 
 

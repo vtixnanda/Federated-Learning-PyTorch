@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# Python version: 3.6
+# Python version: 3.10
 
 import sys
 import os
@@ -12,6 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from datetime import date, timedelta
+import random
 
 import torch
 from tensorboardX import SummaryWriter
@@ -76,7 +77,6 @@ if __name__ == '__main__':
     # Training
     train_loss, train_accuracy = [], []
     val_acc_list, net_list = [], []
-    cv_loss, cv_acc = [], []
     print_every = 2
     val_loss_pre, counter = 0, 0
     
@@ -84,9 +84,12 @@ if __name__ == '__main__':
     clusters = []
     avg_battery_round = []
     energy_node, energy_cloud, energy_tot, num_sel_users = 0.065, 0.117, 10, 3
-    # if centralized:
-    #     energy_cloud = 0.09
     used_energy = np.zeros(args.num_users)
+
+    # initializing time spent and speeds in Mbps
+    cumulative_time = np.zeros(args.epochs)
+    model_size = 0.09 # 90 kb model written in mb
+    cloud_dl, cloud_ul, node_dl, node_ul = 12, 7, 36, 17
 
     # data and how to iterate through data
     data = pd.read_csv('../data/Top_250_Clients_9_to_5.csv')
@@ -96,7 +99,6 @@ if __name__ == '__main__':
 
     for epoch in tqdm(range(args.epochs)):
         chosen_nodes = np.array([])
-        all_non_chosen_nodes = []
 
         # data is from 9 AM to 5 PM UTC
         hour = 9 + epoch % 9
@@ -105,6 +107,12 @@ if __name__ == '__main__':
         df_commround = data[data['utc_date'] == str(today)]
         df_commround = df_commround[df_commround['utc_hour'] == hour]
         G = hourly_data(df_commround)
+
+        # whether a round will face conn. issues
+        # default is p_round_fail = 0
+        if np.random.rand() < args.p_round_fail:
+            nodes_to_remove = random.sample(G.nodes(), int(np.ceil(args.num_nodes_rem * G.number_of_nodes())))
+            G.remove_nodes_from(nodes_to_remove)
 
         global_model.train()
         current_nodes = np.array(G.nodes)
@@ -120,8 +128,10 @@ if __name__ == '__main__':
             train_accuracy.append(train_accuracy[-1])
             train_loss.append(train_loss[-1])
             avg_battery_round.append(avg_battery_round[-1])
+            cumulative_time[epoch] = cumulative_time[epoch-1]
             continue
 
+        # modularity clustering
         if args.modularity and G.edges:
             clusters = community.greedy_modularity_communities(G)
             clusters = [list(x) for x in clusters]
@@ -140,6 +150,7 @@ if __name__ == '__main__':
             idx_nodes = np.where(used_energy[current_nodes] <= energy_tot - energy_cloud)[0]
             eligible_nodes = current_nodes[idx_nodes]
 
+            # centralized
             if centralized:
                 chosen_nodes = eligible_nodes
             else:
@@ -147,23 +158,25 @@ if __name__ == '__main__':
                                   energy_cloud - energy_node*G.degree[node]]
                 chosen_nodes = np.random.choice(eligible_nodes, min(num_sel_users, len(eligible_nodes)))#, replace=False)
 
+        # chosen nodes after energy criteria is met
         chosen_nodes = chosen_nodes.astype(int)
 
-        # Step 2: Update used_energy for chosen nodes
+        # Step 2: Update used_energy for chosen nodes and cumulative time
         if chosen_nodes.size == 0:
-            used_energy = np.maximum(used_energy, 0)
             train_accuracy.append(train_accuracy[-1])
             train_loss.append(train_loss[-1])
             avg_battery_round.append(np.mean(used_energy))
+            cumulative_time[epoch] = cumulative_time[epoch-1]
             
         else:
             for node in chosen_nodes:
                 used_energy[node] += energy_cloud 
                 if not centralized:
                     used_energy[node] += energy_node*G.degree[node]
+
             local_weights, local_losses = [], []
 
-            # include chosen node as part of aggregation
+            # include chosen node as part of aggregation for training
             for idx in chosen_nodes:
                 try:
                     local_model = LocalUpdate(args=args, dataset=train_dataset,
@@ -175,15 +188,19 @@ if __name__ == '__main__':
                 except:
                     continue
 
-            if not centralized:
+            # updating cumulative time
+            if centralized:
+                cumulative_time[epoch] = cumulative_time[epoch-1] + model_size*(1/cloud_ul + 1/cloud_dl)
+            # feature aggregation for random and modular approach
+            else:
+                degrees = [G.degree[node] for node in chosen_nodes]
+                max_neighs = max(degrees)
+                cumulative_time[epoch] = (cumulative_time[epoch-1] + model_size*(1/cloud_ul + 1/cloud_dl) + 
+                                          model_size*max_neighs*(1/cloud_ul + 1/cloud_dl))
                 for idx in chosen_nodes:
                     neighbors = G.neighbors(idx)
                     eligible_neighbors = [neigh for neigh in neighbors if used_energy[neigh] <= energy_tot - energy_node]
                     used_energy[eligible_neighbors] += energy_node
-
-                    non_chosen_non_neighbor_nodes = [j for j in range(args.num_users) 
-                        if j not in chosen_nodes and j not in neighbors]
-                    all_non_chosen_nodes.extend(non_chosen_non_neighbor_nodes)
 
                     for neigh in eligible_neighbors:
                         try:   
@@ -195,12 +212,6 @@ if __name__ == '__main__':
                             local_losses.append(copy.deepcopy(loss))
                         except:
                             continue
-            else:
-                non_chosen_nodes = [j for j in range(args.num_users) if j not in chosen_nodes]
-                all_non_chosen_nodes.extend(non_chosen_nodes)
-
-            # Update used_energy for nodes that are neither chosen nor neighbors of chosen nodes
-            all_non_chosen_nodes = np.unique(all_non_chosen_nodes)  # Remove duplicates
 
             # Step 5: Ensure used_energy values are non-negative
             used_energy = np.maximum(0, used_energy)
@@ -234,10 +245,10 @@ if __name__ == '__main__':
 
 
             #print global training loss after every 'i' rounds
-            if (epoch+1) % print_every == 0:
-                print(f' \nAvg Training Stats after {epoch+1} global rounds:')
-                print(f'Training Loss : {np.mean(np.array(train_loss))}')
-                print('Train Accuracy: {:.2f}% \n'.format(100*train_accuracy[-1]))
+            # if (epoch+1) % print_every == 0:
+            #     print(f' \nAvg Training Stats after {epoch+1} global rounds:')
+            #     print(f'Training Loss : {np.mean(np.array(train_loss))}')
+            #     print('Train Accuracy: {:.2f}% \n'.format(100*train_accuracy[-1]))
         
         # update time and date for next round if needed
         # data is from 9 AM to 5 PM UTC
@@ -263,14 +274,11 @@ if __name__ == '__main__':
 
     print('\n Total Run Time: {0:0.4f}'.format(time.time()-start_time))
 
-    # PLOTTING (optional)
-    # import matplotlib
-    # import matplotlib.pyplot as plt
-    # matplotlib.use('Agg')
-    np.savez('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_new'.
+    np.savez('../save/fed_{}_{}_{}_iid[{}]_M[{}]_Central[{}]_prl[{}]_nrr[{}]'.
                 format(args.dataset, args.model, args.epochs,
-                       args.iid, args.modularity, centralized), 
+                       args.iid, args.modularity, centralized, args.p_round_fail, args.num_nodes_rem), 
                        battery = (np.array(avg_battery_round)/energy_tot) * 100, 
                        train_accuracy = train_accuracy,
                        train_loss = train_loss,
-                       test_acc = test_acc)
+                       test_acc = test_acc,
+                       cumulative_time = cumulative_time)
